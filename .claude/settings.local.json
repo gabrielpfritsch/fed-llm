@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "WebFetch(domain:www.federalreserve.gov)",
-      "Bash(python:*)"
-    ],
-    "deny": []
-  }
-}
