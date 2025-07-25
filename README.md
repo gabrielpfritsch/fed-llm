@@ -1,6 +1,4 @@
-# Fed-LLM: FOMC Data Scrapers
-
-A collection of Python scrapers for extracting Federal Reserve FOMC communications data.
+# Fed-LLM project
 
 ## Overview
 
