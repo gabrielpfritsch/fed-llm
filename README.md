@@ -2,22 +2,31 @@
 
 ## Overview
 
-This repository contains scrapers for collecting comprehensive FOMC (Federal Open Market Committee) data from the Federal Reserve website, including:
+This repository contains:
 
+### FOMC Communications (`fed-comms/`)
 - **Statements**: Policy statements from FOMC meetings
 - **Minutes**: Detailed meeting minutes 
 - **Press Conferences**: Transcripts from Chair press conferences (2011+)
 - **Speeches**: Individual speeches by FOMC members (2000-2025)
 
+### Economic Data (`data/`)
+- Macro & financial data (PCE, CPI, Payroll, S&P500, etc.)
+- *Coming soon*
+
+### News articles (`news/`)
+- Reuters articles related to monetary policy
+- *Coming soon*
+
 ## Dataset
 
-The scraped dataset includes:
+The current dataset includes:
 - FOMC member speeches
 - Meeting minutes
 - Press conference transcripts
 - Complete collection of FOMC statements
 
-All data is saved in both raw and clean formats with consistent JSON structure.
+All FOMC data is saved in both raw and clean formats with consistent JSON structure.
 
 ## Usage
 
