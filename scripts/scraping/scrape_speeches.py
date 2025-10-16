@@ -17,8 +17,8 @@ class FOMCSpeechScraper:
         })
         
         # Create directories
-        os.makedirs('speeches/raw', exist_ok=True)
-        os.makedirs('speeches/clean', exist_ok=True)
+        os.makedirs('data/fed-comms/speeches/raw', exist_ok=True)
+        os.makedirs('data/fed-comms/speeches/clean', exist_ok=True)
     
     def get_speeches_for_year(self, year):
         """
@@ -669,7 +669,7 @@ class FOMCSpeechScraper:
         """
         Save raw HTML content to file
         """
-        filename = f"speeches/raw/speech{date_str}.html"
+        filename = f"data/fed-comms/speeches/raw/speech{date_str}.html"
         with open(filename, 'w', encoding='utf-8') as f:
             f.write(f"<!-- Source URL: {url} -->\n")
             f.write(f"<!-- Scraped: {datetime.now().isoformat()} -->\n")
@@ -697,7 +697,7 @@ class FOMCSpeechScraper:
             "text": text_content
         }
         
-        filename = f"speeches/clean/speech{speech_info['date']}.json"
+        filename = f"data/fed-comms/speeches/clean/speech{speech_info['date']}.json"
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         
@@ -721,7 +721,7 @@ class FOMCSpeechScraper:
         
         for i, speech in enumerate(speeches, 1):
             # Check if already exists
-            json_exists = os.path.exists(f"speeches/clean/speech{speech['date']}.json")
+            json_exists = os.path.exists(f"data/fed-comms/speeches/clean/speech{speech['date']}.json")
             
             if json_exists:
                 print(f"  [{i}/{len(speeches)}] {speech['date']}: Already exists - skipping")

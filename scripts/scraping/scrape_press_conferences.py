@@ -16,8 +16,8 @@ class FOMCPressConferenceScraper:
         })
         
         # Create directories
-        os.makedirs('press-confs/raw', exist_ok=True)
-        os.makedirs('press-confs/clean', exist_ok=True)
+        os.makedirs('data/fed-comms/press-confs/raw', exist_ok=True)
+        os.makedirs('data/fed-comms/press-confs/clean', exist_ok=True)
     
     def get_known_press_conference_dates(self):
         """
@@ -96,12 +96,12 @@ class FOMCPressConferenceScraper:
         """
         Save raw PDF content to file
         """
-        filename = f"press-confs/raw/pressconf{date_str}.pdf"
+        filename = f"data/fed-comms/press-confs/raw/pressconf{date_str}.pdf"
         with open(filename, 'wb') as f:
             f.write(pdf_content)
         
         # Also save metadata
-        metadata_file = f"press-confs/raw/pressconf{date_str}.meta"
+        metadata_file = f"data/fed-comms/press-confs/raw/pressconf{date_str}.meta"
         with open(metadata_file, 'w', encoding='utf-8') as f:
             f.write(f"Source URL: {url}\n")
             f.write(f"Downloaded: {datetime.now().isoformat()}\n")
@@ -277,7 +277,7 @@ class FOMCPressConferenceScraper:
             "text": text_content
         }
         
-        filename = f"press-confs/clean/pressconf{date_str}.json"
+        filename = f"data/fed-comms/press-confs/clean/pressconf{date_str}.json"
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         
@@ -347,8 +347,8 @@ class FOMCPressConferenceScraper:
         
         for i, date_str in enumerate(conference_dates, 1):
             # Check if already exists
-            raw_exists = os.path.exists(f"press-confs/raw/pressconf{date_str}.pdf")
-            json_exists = os.path.exists(f"press-confs/clean/pressconf{date_str}.json")
+            raw_exists = os.path.exists(f"data/fed-comms/press-confs/raw/pressconf{date_str}.pdf")
+            json_exists = os.path.exists(f"data/fed-comms/press-confs/clean/pressconf{date_str}.json")
             
             if raw_exists and json_exists:
                 print(f"[{i}/{len(conference_dates)}] {date_str}: Already exists - skipping")

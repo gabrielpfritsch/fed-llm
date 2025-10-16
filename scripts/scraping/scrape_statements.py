@@ -16,8 +16,8 @@ class FOMCStatementScraper:
         })
         
         # Create directories
-        os.makedirs('statements/raw', exist_ok=True)
-        os.makedirs('statements/clean', exist_ok=True)
+        os.makedirs('data/fed-comms/statements/raw', exist_ok=True)
+        os.makedirs('data/fed-comms/statements/clean', exist_ok=True)
     
     def get_known_fomc_dates(self):
         """
@@ -125,7 +125,7 @@ class FOMCStatementScraper:
         """
         Save raw HTML content to file
         """
-        filename = f"statements/raw/statement{date_str}.html"
+        filename = f"data/fed-comms/statements/raw/statement{date_str}.html"
         with open(filename, 'w', encoding='utf-8') as f:
             f.write(f"<!-- Source URL: {url} -->\n")
             f.write(f"<!-- Scraped: {datetime.now().isoformat()} -->\n")
@@ -292,7 +292,7 @@ class FOMCStatementScraper:
             "text": text_content
         }
         
-        filename = f"statements/clean/statement{date_str}.json"
+        filename = f"data/fed-comms/statements/clean/statement{date_str}.json"
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         
@@ -364,8 +364,8 @@ class FOMCStatementScraper:
         
         for i, date_str in enumerate(meeting_dates, 1):
             # Check if already exists
-            raw_exists = os.path.exists(f"statements/raw/statement{date_str}.html")
-            json_exists = os.path.exists(f"statements/clean/statement{date_str}.json")
+            raw_exists = os.path.exists(f"data/fed-comms/statements/raw/statement{date_str}.html")
+            json_exists = os.path.exists(f"data/fed-comms/statements/clean/statement{date_str}.json")
             
             if raw_exists and json_exists:
                 print(f"[{i}/{len(meeting_dates)}] {date_str}: Already exists - skipping")
