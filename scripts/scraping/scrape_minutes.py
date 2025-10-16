@@ -1,23 +1,41 @@
 import requests
 import json
-import os
 import re
 from datetime import datetime
+from pathlib import Path
 from bs4 import BeautifulSoup
 import time
-from urllib.parse import urljoin
+from typing import Optional, List
 
 class FOMCMinutesScraper:
+    """Scraper for FOMC meeting minutes from the Federal Reserve website."""
+    
+    # Constants
+    BASE_URL = "https://www.federalreserve.gov"
+    MIN_MINUTES_LENGTH = 200
+    REQUEST_TIMEOUT = 15
+    DELAY_BETWEEN_URLS = 0.5
+    DELAY_BETWEEN_MEETINGS = 2.0
+    
+    # Common boilerplate phrases to skip
+    SKIP_PHRASES = [
+        'last update:', 'share this page', 'print page', 'email this page',
+        'accessibility contact', 'subscribe to', 'press release', 'back to top',
+        'main navigation', 'please enable javascript', 'skip to main content',
+        'you are here:', 'breadcrumb', 'main menu', 'privacy program', 'foia',
+        'contact us', 'media inquiries', 'other inquiries', 'about the fed',
+        'board of governors of the federal reserve system, washington, d.c.',
+        'return to top', 'release date:'
+    ]
+    
     def __init__(self):
-        self.base_url = "https://www.federalreserve.gov"
         self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        })
         
-        # Create directories
-        os.makedirs('data/fed-comms/minutes/raw', exist_ok=True)
-        os.makedirs('data/fed-comms/minutes/clean', exist_ok=True)
+        # Create directories using pathlib
+        self.raw_dir = Path('data/fed-comms/minutes/raw')
+        self.clean_dir = Path('data/fed-comms/minutes/clean')
+        self.raw_dir.mkdir(parents=True, exist_ok=True)
+        self.clean_dir.mkdir(parents=True, exist_ok=True)
     
     def get_known_fomc_dates(self):
         """
@@ -75,15 +93,21 @@ class FOMCMinutesScraper:
             "20230201", "20230322", "20230503", "20230614", "20230726", "20230920", "20231101", "20231213",
             # 2024
             "20240131", "20240320", "20240501", "20240612", "20240731", "20240918", "20241107", "20241218",
-            # 2025 (actual dates through July 23, 2025)
+            # 2025
             "20250129", "20250319", "20250507", "20250618", "20250730"
         ]
         
         return sorted(known_dates)
     
-    def construct_minutes_urls(self, date_str):
+    def construct_minutes_urls(self, date_str: str) -> List[str]:
         """
-        Construct possible URLs for FOMC minutes based on historical patterns
+        Construct possible URLs for FOMC minutes based on historical patterns.
+        
+        Args:
+            date_str: Date in YYYYMMDD format
+            
+        Returns:
+            List of possible URLs to try
         """
         year = date_str[:4]
         year_int = int(year)
@@ -92,29 +116,43 @@ class FOMCMinutesScraper:
         
         if year_int >= 2008:
             # Modern format (2008-present)
-            urls.append(f"{self.base_url}/monetarypolicy/fomcminutes{date_str}.htm")
+            urls.append(f"{self.BASE_URL}/monetarypolicy/fomcminutes{date_str}.htm")
             # Some may also be available as PDFs
-            urls.append(f"{self.base_url}/monetarypolicy/fomcminutes{date_str}.pdf")
+            urls.append(f"{self.BASE_URL}/monetarypolicy/fomcminutes{date_str}.pdf")
         else:
             # Historical format (2000-2007)
-            urls.append(f"{self.base_url}/fomc/minutes/{date_str}.htm")
+            urls.append(f"{self.BASE_URL}/fomc/minutes/{date_str}.htm")
         
         return urls
     
-    def save_raw_html(self, date_str, html_content, url):
+    def save_raw_html(self, date_str: str, html_content: str, url: str) -> Path:
         """
-        Save raw HTML content to file
+        Save raw HTML content to file.
+        
+        Args:
+            date_str: Date in YYYYMMDD format
+            html_content: Raw HTML content
+            url: Source URL
+            
+        Returns:
+            Path to saved file
         """
-        filename = f"data/fed-comms/minutes/raw/minutes{date_str}.html"
+        filename = self.raw_dir / f"minutes{date_str}.html"
         with open(filename, 'w', encoding='utf-8') as f:
             f.write(f"<!-- Source URL: {url} -->\n")
             f.write(f"<!-- Scraped: {datetime.now().isoformat()} -->\n")
             f.write(html_content)
         return filename
     
-    def extract_release_date(self, html_content):
+    def extract_release_date(self, html_content: str) -> Optional[str]:
         """
-        Extract the release date from the minutes HTML
+        Extract the release date from the minutes HTML.
+        
+        Args:
+            html_content: Raw HTML content
+            
+        Returns:
+            Release date string if found, None otherwise
         """
         soup = BeautifulSoup(html_content, 'html.parser')
         
@@ -153,9 +191,43 @@ class FOMCMinutesScraper:
         
         return None
     
-    def extract_minutes_text(self, html_content):
+    def _clean_whitespace(self, text: str) -> str:
         """
-        Extract clean text from FOMC minutes HTML
+        Clean up whitespace in text while preserving paragraph breaks.
+        
+        Args:
+            text: Text to clean
+            
+        Returns:
+            Cleaned text
+        """
+        # Split into lines and clean each line
+        lines = text.split('\n')
+        cleaned_lines = []
+        
+        for line in lines:
+            # Clean multiple spaces within each line
+            cleaned_line = re.sub(r'[ \t]+', ' ', line).strip()
+            if cleaned_line:  # Only keep non-empty lines
+                cleaned_lines.append(cleaned_line)
+            elif cleaned_lines and cleaned_lines[-1]:  # Preserve paragraph breaks
+                cleaned_lines.append('')
+        
+        # Join lines back and normalize paragraph breaks
+        text = '\n'.join(cleaned_lines)
+        # Reduce multiple blank lines to single blank line
+        text = re.sub(r'\n\n\n+', '\n\n', text)
+        return text.strip()
+    
+    def extract_minutes_text(self, html_content: str) -> str:
+        """
+        Extract clean text from FOMC minutes HTML.
+        
+        Args:
+            html_content: Raw HTML content
+            
+        Returns:
+            Cleaned text content
         """
         soup = BeautifulSoup(html_content, 'html.parser')
         
@@ -171,125 +243,240 @@ class FOMCMinutesScraper:
         else:
             return self.extract_modern_minutes_text(soup)
     
-    def extract_historical_minutes_text(self, soup):
+    def extract_historical_minutes_text(self, soup: BeautifulSoup) -> str:
         """
-        Extract text from historical FOMC minutes (2000-2007 era)
+        Extract text from historical FOMC minutes (2000-2007 era).
+        
+        Args:
+            soup: BeautifulSoup parsed HTML
+            
+        Returns:
+            Cleaned text content
         """
-        # For historical pages, extract directly from body
+        # For historical pages, extract from paragraphs and text blocks
         body = soup.find('body')
         if not body:
             body = soup
         
-        # Get all text and clean it up
-        full_text = body.get_text()
-        
-        # Split into lines and filter
-        lines = [line.strip() for line in full_text.split('\n') if line.strip()]
-        
-        # Filter out header/footer elements
-        filtered_lines = []
+        # Extract text from paragraphs and table cells, preserving document order
+        paragraphs = []
         content_started = False
+        seen_texts = set()  # Track text to avoid duplicates
         
-        for line in lines:
-            # Skip until we find the actual minutes content
-            if not content_started:
-                if ('minutes of the federal open market committee' in line.lower() or 
-                    'meeting held on' in line.lower() or
-                    'a meeting of the federal open market committee' in line.lower()):
-                    content_started = True
-                    filtered_lines.append(line)
+        # Process all elements in document order (p, td, th, and li for table headers and lists)
+        for element in body.find_all(['p', 'td', 'th', 'li']):
+            # Skip td elements that contain p tags (to avoid duplicates)
+            if element.name == 'td' and element.find('p'):
                 continue
             
-            # Skip common boilerplate
-            skip_phrases = [
-                'release date:', 'last update:', 'home', 'accessibility', 
-                'board of governors', 'washington', 'privacy program', 'foia', 'contact us'
+            # Handle bullet points
+            if element.name == 'li':
+                text = element.get_text(separator=' ', strip=True)
+                if text and content_started:
+                    paragraphs.append(f"- {text}")
+                continue
+            
+            # Check for strong tags in paragraphs (section headers)
+            strong_tags = element.find_all('strong')
+            if strong_tags and element.name == 'p':
+                first_strong = strong_tags[0]
+                strong_text = first_strong.get_text(strip=True)
+                remaining_text = element.get_text(separator=' ', strip=True)
+                
+                # If strong tag is followed by <br/> or is the whole paragraph, treat as header
+                if first_strong.find_next_sibling('br') or remaining_text == strong_text:
+                    # Skip until we find actual minutes content
+                    if not content_started:
+                        if ('minutes of the federal open market committee' in strong_text.lower() or 
+                            'meeting held on' in strong_text.lower() or
+                            'a meeting of the federal open market committee' in strong_text.lower()):
+                            content_started = True
+                        else:
+                            continue
+                    
+                    # Add strong text as separate paragraph
+                    if strong_text not in seen_texts:
+                        seen_texts.add(strong_text)
+                        paragraphs.append(strong_text)
+                    
+                    # Add remaining text if any
+                    rest = remaining_text.replace(strong_text, '', 1).strip()
+                    if rest and rest not in seen_texts:
+                        seen_texts.add(rest)
+                        paragraphs.append(rest)
+                    continue
+            
+            # Regular text extraction
+            text = element.get_text(separator=' ', strip=True)
+            if not text:
+                continue
+            
+            # Skip until we find the actual minutes content
+            if not content_started:
+                if ('minutes of the federal open market committee' in text.lower() or 
+                    'meeting held on' in text.lower() or
+                    'a meeting of the federal open market committee' in text.lower()):
+                    content_started = True
+                else:
+                    continue
+            
+            # Skip common boilerplate using class constant
+            if any(phrase in text.lower() for phrase in self.SKIP_PHRASES):
+                continue
+            
+            # Skip duplicates
+            if text in seen_texts:
+                continue
+            
+            # Remove "Return to text" from footnotes
+            text = re.sub(r'\s*Return to text\s*$', '', text, flags=re.IGNORECASE)
+            
+            seen_texts.add(text)
+            paragraphs.append(text)
+        
+        # Join with double newlines to preserve paragraph structure
+        full_text = '\n\n'.join(paragraphs)
+        return self._clean_whitespace(full_text)
+    
+    def extract_modern_minutes_text(self, soup: BeautifulSoup) -> str:
+        """
+        Extract text from modern FOMC minutes (2008+).
+        
+        Args:
+            soup: BeautifulSoup parsed HTML
+            
+        Returns:
+            Cleaned text content
+        """
+        # Find the article content area specifically (more targeted than before)
+        main_content = soup.select_one('div#article')
+        
+        if not main_content:
+            # Fallback to other selectors
+            content_selectors = [
+                'div#content',
+                'div.col-xs-12', 
+                'main',
+                'article',
+                'div[class*="content"]'
             ]
             
-            if not any(phrase in line.lower() for phrase in skip_phrases):
-                filtered_lines.append(line)
-        
-        # Join and clean
-        full_text = ' '.join(filtered_lines)
-        full_text = re.sub(r'\s+', ' ', full_text)  # Multiple spaces to single
-        
-        return full_text.strip()
-    
-    def extract_modern_minutes_text(self, soup):
-        """
-        Extract text from modern FOMC minutes (2008+)
-        """
-        # Try to find main content area
-        content_selectors = [
-            'div#content',
-            'div.col-xs-12', 
-            'main',
-            'article',
-            'div[class*="content"]',
-            'div[id*="content"]'
-        ]
-        
-        main_content = None
-        for selector in content_selectors:
-            main_content = soup.select_one(selector)
-            if main_content:
-                break
+            for selector in content_selectors:
+                main_content = soup.select_one(selector)
+                if main_content:
+                    break
         
         if not main_content:
             main_content = soup
         
-        # Extract paragraphs and other text elements
-        text_elements = []
-        for element in main_content.find_all(['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
-            text = element.get_text().strip()
-            if len(text) > 10:  # Skip very short text
-                # Skip common navigation/header text and boilerplate
-                skip_phrases = [
-                    'last update', 'share', 'print', 'email', 'accessibility', 'contact',
-                    'subscribe', 'press release', 'back to top', 'main navigation',
-                    'search', 'home', 'about the fed', 'please enable javascript',
-                    'skip to main content', 'you are here:', 'breadcrumb', 'main menu',
-                    'board of governors of the federal reserve system', 'washington, d.c.',
-                    'media inquiries', 'other inquiries'
-                ]
-                
-                if not any(phrase in text.lower() for phrase in skip_phrases):
-                    text_elements.append(text)
+        # Track if we've started seeing actual content (not navigation)
+        content_started = False
+        seen_texts = set()
+        paragraphs = []
         
-        # Join with paragraph breaks
-        full_text = '\n\n'.join(text_elements)
+        # Process elements in document order
+        for element in main_content.find_all(['h3', 'p', 'blockquote', 'li']):
+            # Check if this is the start of actual content
+            if not content_started and element.name == 'h3':
+                h3_text = element.get_text(strip=True)
+                if 'minutes of the federal open market committee' in h3_text.lower():
+                    content_started = True
+                    paragraphs.append(h3_text)
+                    continue
+            
+            # Skip until content starts
+            if not content_started:
+                continue
+            
+            # Handle different element types
+            if element.name == 'li':
+                # Bullet point - add with bullet marker
+                text = element.get_text(separator=' ', strip=True)
+                if text:
+                    paragraphs.append(f"- {text}")
+            else:
+                # Skip blockquote elements that contain lists (will be processed via li elements)
+                if element.name == 'blockquote' and (element.find('ul') or element.find('ol')):
+                    continue
+                
+                # For p, h3, blockquote - check for strong tags for headers
+                strong_tags = element.find_all('strong')
+                if strong_tags and element.name == 'p':
+                    # Check if the strong tag is at the beginning (likely a header)
+                    first_strong = strong_tags[0]
+                    strong_text = first_strong.get_text(strip=True)
+                    
+                    # Get remaining text after the strong tag
+                    remaining_text = element.get_text(separator=' ', strip=True)
+                    
+                    # If the strong text is followed by <br/>, it's a header
+                    if first_strong.find_next_sibling('br') or remaining_text == strong_text:
+                        paragraphs.append(strong_text)
+                        # If there's more text, add it separately
+                        rest = remaining_text.replace(strong_text, '', 1).strip()
+                        if rest:
+                            paragraphs.append(rest)
+                    else:
+                        # Strong tag within paragraph, keep together
+                        paragraphs.append(remaining_text)
+                else:
+                    # Regular paragraph
+                    text = element.get_text(separator=' ', strip=True)
+                    if text:
+                        # Skip common boilerplate
+                        if any(phrase in text.lower() for phrase in self.SKIP_PHRASES):
+                            continue
+                        
+                        # Skip duplicates
+                        if text in seen_texts:
+                            continue
+                        
+                        # Remove "Return to text" from footnotes
+                        text = re.sub(r'\s*Return to text\s*$', '', text, flags=re.IGNORECASE)
+                        
+                        seen_texts.add(text)
+                        paragraphs.append(text)
+        
+        # Join with paragraph breaks (double newlines)
+        full_text = '\n\n'.join(paragraphs)
         
         # Remove specific unwanted patterns
         unwanted_patterns = [
             r'Please enable JavaScript if it is disabled in your browser.*?below\.',
-            r'Skip to main content',
-            r'You are here:.*',
-            r'Last Update:.*',
-            r'For media inquiries.*',
-            r'Subscribe.*'
+            r'Last Update:.*'
         ]
         
         for pattern in unwanted_patterns:
             full_text = re.sub(pattern, '', full_text, flags=re.IGNORECASE | re.DOTALL)
         
-        # Clean up whitespace
-        full_text = re.sub(r'\s+', ' ', full_text)  # Multiple spaces to single
-        full_text = re.sub(r'\n\s*\n\s*\n+', '\n\n', full_text)  # Multiple newlines to double
-        
-        return full_text.strip()
+        return self._clean_whitespace(full_text)
     
-    def format_date(self, date_str):
+    def format_date(self, date_str: str) -> str:
         """
-        Convert YYYYMMDD to DD-MM-YYYY format
+        Convert YYYYMMDD to ISO 8601 format (YYYY-MM-DD).
+        
+        Args:
+            date_str: Date in YYYYMMDD format
+            
+        Returns:
+            Date in YYYY-MM-DD format
         """
         year = date_str[:4]
         month = date_str[4:6]
         day = date_str[6:8]
-        return f"{day}-{month}-{year}"
+        return f"{year}-{month}-{day}"
     
-    def save_clean_json(self, date_str, text_content, release_date=None):
+    def save_clean_json(self, date_str: str, text_content: str, release_date: Optional[str] = None) -> Path:
         """
-        Save clean JSON file with required format for minutes
+        Save clean JSON file with required format for minutes.
+        
+        Args:
+            date_str: Date in YYYYMMDD format
+            text_content: Cleaned text content
+            release_date: Optional release date string
+            
+        Returns:
+            Path to saved file
         """
         data = {
             "meeting_date": self.format_date(date_str),
@@ -298,22 +485,28 @@ class FOMCMinutesScraper:
             "text": text_content
         }
         
-        filename = f"data/fed-comms/minutes/clean/minutes{date_str}.json"
+        filename = self.clean_dir / f"minutes{date_str}.json"
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         
         return filename
     
-    def scrape_minutes(self, date_str):
+    def scrape_minutes(self, date_str: str) -> bool:
         """
-        Scrape FOMC minutes for a single meeting date
+        Scrape FOMC minutes for a single meeting date.
+        
+        Args:
+            date_str: Date in YYYYMMDD format
+            
+        Returns:
+            True if successful, False otherwise
         """
         urls = self.construct_minutes_urls(date_str)
         
         for url in urls:
             try:
                 print(f"  Trying: {url}")
-                response = self.session.get(url, timeout=15)
+                response = self.session.get(url, timeout=self.REQUEST_TIMEOUT)
                 
                 if response.status_code == 200:
                     html_content = response.text
@@ -331,7 +524,7 @@ class FOMCMinutesScraper:
                         # Extract text content
                         text_content = self.extract_minutes_text(html_content)
                         
-                        if len(text_content) > 500:  # Minutes should be substantial
+                        if len(text_content) > self.MIN_MINUTES_LENGTH:
                             # Extract release date
                             release_date = self.extract_release_date(html_content)
                             
@@ -352,36 +545,26 @@ class FOMCMinutesScraper:
                 else:
                     print(f"  HTTP {response.status_code}")
                     
+            except requests.exceptions.RequestException as e:
+                print(f"  Request error: {str(e)}")
             except Exception as e:
-                print(f"  Error: {str(e)}")
+                print(f"  Unexpected error: {str(e)}")
             
             # Small delay between URL attempts
-            time.sleep(0.5)
+            time.sleep(self.DELAY_BETWEEN_URLS)
         
         return False
     
-    def scrape_all_minutes(self):
-        """
-        Scrape all FOMC minutes from 2000 to 2025
-        """
+    def scrape_all_minutes(self) -> None:
+        """Scrape all FOMC minutes from 2000 to 2025."""
         meeting_dates = self.get_known_fomc_dates()
         successful = 0
         failed = 0
-        skipped = 0
         
         print(f"Starting FOMC minutes scraper for {len(meeting_dates)} dates...")
         print("=" * 60)
         
         for i, date_str in enumerate(meeting_dates, 1):
-            # Check if already exists
-            raw_exists = os.path.exists(f"data/fed-comms/minutes/raw/minutes{date_str}.html")
-            json_exists = os.path.exists(f"data/fed-comms/minutes/clean/minutes{date_str}.json")
-            
-            if raw_exists and json_exists:
-                print(f"[{i}/{len(meeting_dates)}] {date_str}: Already exists - skipping")
-                skipped += 1
-                continue
-            
             print(f"[{i}/{len(meeting_dates)}] {date_str}: Scraping...")
             
             if self.scrape_minutes(date_str):
@@ -391,16 +574,16 @@ class FOMCMinutesScraper:
                 print(f"  Failed to find minutes for {date_str}")
             
             # Respectful delay between meetings
-            time.sleep(2)
+            time.sleep(self.DELAY_BETWEEN_MEETINGS)
         
         print("=" * 60)
         print(f"Scraping complete!")
         print(f"Successful: {successful}")
         print(f"Failed: {failed}")
-        print(f"Skipped: {skipped}")
-        print(f"Total processed: {successful + failed + skipped}")
+        print(f"Total processed: {successful + failed}")
 
-def main():
+def main() -> None:
+    """Main entry point for the scraper."""
     scraper = FOMCMinutesScraper()
     scraper.scrape_all_minutes()
 
