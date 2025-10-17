@@ -18,14 +18,19 @@ class FOMCMinutesScraper:
     DELAY_BETWEEN_MEETINGS = 2.0
     
     # Common boilerplate phrases to skip
+    # NOTE: These should be SPECIFIC to avoid filtering legitimate content
+    # Avoid broad phrases that might appear in actual minutes text
     SKIP_PHRASES = [
         'last update:', 'share this page', 'print page', 'email this page',
-        'accessibility contact', 'subscribe to', 'press release', 'back to top',
+        'accessibility contact', 'subscribe to', 'back to top',
         'main navigation', 'please enable javascript', 'skip to main content',
         'you are here:', 'breadcrumb', 'main menu', 'privacy program', 'foia',
-        'contact us', 'media inquiries', 'other inquiries', 'about the fed',
+        'contact us', 'media inquiries', 'other inquiries',
         'board of governors of the federal reserve system, washington, d.c.',
-        'return to top', 'release date:'
+        'return to top', 'release date:',
+        # More specific navigation phrases (with context to avoid false positives)
+        'about the fed |', 'about the fed:', 'view press release', 
+        'latest press releases', 'subscribe to rss'
     ]
     
     def __init__(self):
@@ -39,10 +44,24 @@ class FOMCMinutesScraper:
     
     def get_known_fomc_dates(self):
         """
-        Get comprehensive list of known FOMC meeting dates from 2000-2025
+        Get comprehensive list of known FOMC meeting dates from 1993-2025
         Using same dates as statements since minutes are released for the same meetings
         """
         known_dates = [
+            # 1993
+            "19930203", "19930323", "19930518", "19930707", "19930817", "19930921", "19931116", "19931221",
+            # 1994
+            "19940204", "19940322", "19940517", "19940706", "19940816", "19940927", "19941115", "19941220",
+            # 1995
+            "19950201", "19950328", "19950523", "19950706", "19950822", "19950926", "19951115", "19951219",
+            # 1996
+            "19960130", "19960326", "19960521", "19960702", "19960820", "19960924", "19961113", "19961217",
+            # 1997
+            "19970204", "19970325", "19970520", "19970701", "19970819", "19970930", "19971112", "19971216",
+            # 1998
+            "19980203", "19980331", "19980519", "19980630", "19980818", "19980929", "19981117", "19981222",
+            # 1999
+            "19990202", "19990330", "19990518", "19990629", "19990824", "19991005", "19991116", "19991221",
             # 2000
             "20000202", "20000321", "20000516", "20000628", "20000822", "20001003", "20001115", "20001219",
             # 2001  
@@ -123,8 +142,11 @@ class FOMCMinutesScraper:
             urls.append(f"{self.BASE_URL}/monetarypolicy/fomcminutes{date_str}.htm")
             # Some may also be available as PDFs
             urls.append(f"{self.BASE_URL}/monetarypolicy/fomcminutes{date_str}.pdf")
+        # 1993-1995 format: /fomc/MINUTES/YYYY/YYYYMMDDmin.htm
+        elif year_int >= 1993 and year_int <= 1995:
+            urls.append(f"{self.BASE_URL}/fomc/MINUTES/{year}/{date_str}min.htm")
         else:
-            # Historical format (pre-October 2007)
+            # Historical format (1996-Oct 2007)
             urls.append(f"{self.BASE_URL}/fomc/minutes/{date_str}.htm")
         
         return urls
@@ -240,7 +262,10 @@ class FOMCMinutesScraper:
             element.decompose()
         
         # Check if this is a historical page (simpler HTML structure)
-        is_historical = '<HTML>' in html_content.upper() or '/fomc/minutes/' in html_content
+        # Includes 1993-1995 format (/fomc/MINUTES/) and 1996-Oct 2007 format (/fomc/minutes/)
+        is_historical = ('<HTML>' in html_content.upper() or 
+                        '/fomc/minutes/' in html_content or 
+                        '/fomc/MINUTES/' in html_content)
         
         if is_historical:
             return self.extract_historical_minutes_text(soup)
@@ -249,7 +274,7 @@ class FOMCMinutesScraper:
     
     def extract_historical_minutes_text(self, soup: BeautifulSoup) -> str:
         """
-        Extract text from historical FOMC minutes (2000-2007 era).
+        Extract text from historical FOMC minutes (1993-Oct 2007).
         
         Args:
             soup: BeautifulSoup parsed HTML
@@ -603,6 +628,39 @@ class FOMCMinutesScraper:
         day = date_str[6:8]
         return f"{year}-{month}-{day}"
     
+    def format_release_date(self, release_date_str: str) -> Optional[str]:
+        """
+        Convert release date from various formats to ISO 8601 format (YYYY-MM-DD).
+        
+        Args:
+            release_date_str: Date string in formats like "July 06, 2022" or "May 21, 1998"
+            
+        Returns:
+            Date in YYYY-MM-DD format, or None if parsing fails
+        """
+        if not release_date_str:
+            return None
+        
+        # Common formats found in Fed minutes
+        formats = [
+            "%B %d, %Y",      # "July 06, 2022"
+            "%B %d,%Y",       # "July 06,2022" (no space after comma)
+            "%b %d, %Y",      # "Jul 06, 2022"
+            "%b %d,%Y",       # "Jul 06,2022"
+            "%B%d, %Y",       # "July06, 2022" (no space)
+            "%B%d,%Y",        # "July06,2022"
+        ]
+        
+        for fmt in formats:
+            try:
+                parsed_date = datetime.strptime(release_date_str.strip(), fmt)
+                return parsed_date.strftime("%Y-%m-%d")
+            except ValueError:
+                continue
+        
+        # If no format worked, return None
+        return None
+    
     def save_clean_json(self, date_str: str, text_content: str, release_date: Optional[str] = None) -> Path:
         """
         Save clean JSON file with required format for minutes.
@@ -610,14 +668,17 @@ class FOMCMinutesScraper:
         Args:
             date_str: Date in YYYYMMDD format
             text_content: Cleaned text content
-            release_date: Optional release date string
+            release_date: Optional release date string (will be converted to YYYY-MM-DD format)
             
         Returns:
             Path to saved file
         """
+        # Format release date to ISO 8601 format
+        formatted_release_date = self.format_release_date(release_date) if release_date else None
+        
         data = {
             "meeting_date": self.format_date(date_str),
-            "release_date": release_date,
+            "release_date": formatted_release_date,
             "type": "minutes", 
             "text": text_content
         }
@@ -698,7 +759,7 @@ class FOMCMinutesScraper:
         return False
     
     def scrape_all_minutes(self) -> None:
-        """Scrape all FOMC minutes from 2000 to 2025."""
+        """Scrape all FOMC minutes from 1993 to 2025."""
         meeting_dates = self.get_known_fomc_dates()
         successful = 0
         failed = 0
