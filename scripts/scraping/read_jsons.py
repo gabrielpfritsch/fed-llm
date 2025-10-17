@@ -7,7 +7,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 
 # Test dates
-dates = ["20071211", "20240612"]
+dates = ["20190130", "20240612"]
 
 json_file = project_root / "data" / "fed-comms" / "minutes" / "clean" / f"minutes{dates[0]}.json"
 
