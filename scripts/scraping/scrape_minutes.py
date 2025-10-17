@@ -46,7 +46,7 @@ class FOMCMinutesScraper:
             # 2000
             "20000202", "20000321", "20000516", "20000628", "20000822", "20001003", "20001115", "20001219",
             # 2001  
-            "20010103", "20010131", "20010320", "20010515", "20010627", "20010821", "20011002", "20011106", "20011211",
+            "20010131", "20010320", "20010515", "20010627", "20010821", "20011002", "20011106", "20011211",
             # 2002
             "20020130", "20020319", "20020507", "20020626", "20020813", "20020924", "20021106", "20021210",
             # 2003
@@ -111,16 +111,20 @@ class FOMCMinutesScraper:
         """
         year = date_str[:4]
         year_int = int(year)
+        month = int(date_str[4:6])
         
         urls = []
         
-        if year_int >= 2008:
-            # Modern format (2008-present)
+        # Edge case: 20080625 uses /fomc20080625.htm instead of /fomcminutes20080625.htm
+        if date_str == "20080625":
+            urls.append(f"{self.BASE_URL}/monetarypolicy/fomc{date_str}.htm")
+        # Modern format (October 2007-present) - URL pattern changed in October 2007
+        elif year_int > 2007 or (year_int == 2007 and month >= 10):
             urls.append(f"{self.BASE_URL}/monetarypolicy/fomcminutes{date_str}.htm")
             # Some may also be available as PDFs
             urls.append(f"{self.BASE_URL}/monetarypolicy/fomcminutes{date_str}.pdf")
         else:
-            # Historical format (2000-2007)
+            # Historical format (pre-October 2007)
             urls.append(f"{self.BASE_URL}/fomc/minutes/{date_str}.htm")
         
         return urls
@@ -269,6 +273,61 @@ class FOMCMinutesScraper:
             if element.name == 'td' and element.find('p'):
                 continue
             
+            # For p elements that contain other p tags (malformed nested HTML),
+            # extract only direct text content (not from nested children)
+            if element.name == 'p' and element.find('p'):
+                # Get only direct text nodes, not from descendants
+                direct_text = ''.join([str(s) for s in element.strings if s.parent == element]).strip()
+                if direct_text:
+                    # Check for strong tags that are direct children
+                    direct_strong = [s for s in element.find_all('strong', recursive=False)]
+                    if direct_strong:
+                        # Handle as header
+                        strong_text = direct_strong[0].get_text(strip=True)
+                        if not content_started:
+                            # Normalize whitespace for trigger phrase matching
+                            strong_normalized = ' '.join(strong_text.lower().split())
+                            if ('minutes of the federal open market committee' in strong_normalized or 
+                                'meeting held on' in strong_normalized or
+                                'a meeting of the federal open market committee' in strong_normalized):
+                                content_started = True
+                            else:
+                                continue
+                        if strong_text not in seen_texts:
+                            seen_texts.add(strong_text)
+                            paragraphs.append(strong_text)
+                        # Add remaining direct text if any
+                        remaining = direct_text.replace(strong_text, '', 1).strip()
+                        if remaining and remaining not in seen_texts:
+                            seen_texts.add(remaining)
+                            paragraphs.append(remaining)
+                    else:
+                        # Regular direct text
+                        if not content_started:
+                            if ('minutes of the federal open market committee' in direct_text.lower() or 
+                                'meeting held on' in direct_text.lower() or
+                                'a meeting of the federal open market committee' in direct_text.lower()):
+                                content_started = True
+                            else:
+                                continue
+                        
+                        # Apply skip phrases check
+                        text_lower = direct_text.lower()
+                        if len(direct_text) < 500:
+                            if any(phrase in text_lower for phrase in self.SKIP_PHRASES):
+                                continue
+                        else:
+                            text_edges = text_lower[:200] + text_lower[-200:]
+                            if any(phrase in text_edges for phrase in self.SKIP_PHRASES):
+                                continue
+                        
+                        if direct_text not in seen_texts:
+                            # Remove "Return to text" from footnotes
+                            direct_text = re.sub(r'\s*Return to text\s*$', '', direct_text, flags=re.IGNORECASE)
+                            seen_texts.add(direct_text)
+                            paragraphs.append(direct_text)
+                continue  # Skip the normal processing below
+            
             # Handle bullet points
             if element.name == 'li':
                 text = element.get_text(separator=' ', strip=True)
@@ -287,9 +346,11 @@ class FOMCMinutesScraper:
                 if first_strong.find_next_sibling('br') or remaining_text == strong_text:
                     # Skip until we find actual minutes content
                     if not content_started:
-                        if ('minutes of the federal open market committee' in strong_text.lower() or 
-                            'meeting held on' in strong_text.lower() or
-                            'a meeting of the federal open market committee' in strong_text.lower()):
+                        # Normalize whitespace for trigger phrase matching
+                        strong_normalized = ' '.join(strong_text.lower().split())
+                        if ('minutes of the federal open market committee' in strong_normalized or 
+                            'meeting held on' in strong_normalized or
+                            'a meeting of the federal open market committee' in strong_normalized):
                             content_started = True
                         else:
                             continue
@@ -313,9 +374,11 @@ class FOMCMinutesScraper:
             
             # Skip until we find the actual minutes content
             if not content_started:
-                if ('minutes of the federal open market committee' in text.lower() or 
-                    'meeting held on' in text.lower() or
-                    'a meeting of the federal open market committee' in text.lower()):
+                # Normalize whitespace for trigger phrase matching
+                text_normalized = ' '.join(text.lower().split())
+                if ('minutes of the federal open market committee' in text_normalized or 
+                    'meeting held on' in text_normalized or
+                    'a meeting of the federal open market committee' in text_normalized):
                     content_started = True
                 else:
                     continue
@@ -354,6 +417,7 @@ class FOMCMinutesScraper:
         if not main_content:
             # Fallback to other selectors
             content_selectors = [
+                'div#leftText',  # 2008-2011 format
                 'div#content',
                 'div.col-xs-12', 
                 'main',
@@ -374,18 +438,28 @@ class FOMCMinutesScraper:
         seen_texts = set()
         paragraphs = []
         
-        # Process elements in document order
-        for element in main_content.find_all(['h3', 'p', 'blockquote', 'li']):
-            # Check if this is the start of actual content
-            if not content_started and element.name == 'h3':
-                h3_text = element.get_text(strip=True)
-                if 'minutes of the federal open market committee' in h3_text.lower():
+        # Check if we have an h1 title (2008-2011 format) to know we can start from beginning
+        # H1 is often outside main_content (sibling container), so check in full soup
+        h1_title = soup.find('h1')
+        if h1_title and 'minutes of the federal open market committee' in h1_title.get_text().lower():
+            content_started = True
+        
+        # Process elements in document order (including tables via td/th)
+        for element in main_content.find_all(['h1', 'h3', 'p', 'blockquote', 'li', 'td', 'th']):
+            # Check if this is the start of actual content (h3 for newer format, h1 for 2008-2011)
+            if not content_started and element.name in ['h1', 'h3']:
+                heading_text = element.get_text(strip=True)
+                if 'minutes of the federal open market committee' in heading_text.lower():
                     content_started = True
-                    paragraphs.append(h3_text)
+                    paragraphs.append(heading_text)
                     continue
             
             # Skip until content starts
             if not content_started:
+                continue
+            
+            # Skip h1 elements after we've started (already processed)
+            if element.name == 'h1':
                 continue
             
             # Handle different element types
@@ -394,13 +468,41 @@ class FOMCMinutesScraper:
                 text = element.get_text(separator=' ', strip=True)
                 if text:
                     paragraphs.append(f"- {text}")
+            elif element.name in ['td', 'th']:
+                # Table cell - skip if it contains p tags (to avoid duplicates)
+                if element.find('p'):
+                    continue
+                
+                text = element.get_text(separator=' ', strip=True)
+                if text and text not in seen_texts:
+                    if not any(phrase in text.lower() for phrase in self.SKIP_PHRASES):
+                        seen_texts.add(text)
+                        paragraphs.append(text)
             else:
                 # Skip blockquote elements that contain lists (will be processed via li elements)
                 if element.name == 'blockquote' and (element.find('ul') or element.find('ol')):
                     continue
                 
+                # Skip blockquote elements that contain p tags (will be processed via p elements)
+                # This prevents duplication where content appears first as a block, then with proper breaks
+                if element.name == 'blockquote' and element.find('p'):
+                    continue
+                
+                # For p elements that contain other p tags (malformed/unclosed HTML),
+                # extract only direct text content (not from nested children)
+                if element.name == 'p' and element.find('p'):
+                    # Get only direct text nodes, not from descendants
+                    direct_text = ''.join([str(s) for s in element.strings if s.parent == element]).strip()
+                    if direct_text and direct_text not in seen_texts:
+                        # Skip boilerplate
+                        if not any(phrase in direct_text.lower() for phrase in self.SKIP_PHRASES):
+                            direct_text = re.sub(r'\s*Return to text\s*$', '', direct_text, flags=re.IGNORECASE)
+                            seen_texts.add(direct_text)
+                            paragraphs.append(direct_text)
+                    continue  # Skip normal processing for this element
+                
                 # For p, h3, blockquote - check for strong tags for headers
-                strong_tags = element.find_all('strong')
+                strong_tags = element.find_all('strong', recursive=False)  # Only direct children
                 if strong_tags and element.name == 'p':
                     # Check if the strong tag is at the beginning (likely a header)
                     first_strong = strong_tags[0]
@@ -420,20 +522,55 @@ class FOMCMinutesScraper:
                         # Strong tag within paragraph, keep together
                         paragraphs.append(remaining_text)
                 else:
-                    # Regular paragraph
-                    text = element.get_text(separator=' ', strip=True)
-                    if text:
-                        # Skip common boilerplate
-                        if any(phrase in text.lower() for phrase in self.SKIP_PHRASES):
-                            continue
+                    # Regular paragraph - check for <BR><BR> which indicates paragraph breaks
+                    html_str = str(element)
+                    has_double_br = '<BR><BR>' in html_str.upper() or '<BR/><BR/>' in html_str.upper()
+                    
+                    if has_double_br and element.name == 'p':
+                        # Split on double BR tags
+                        # Convert to string, split on double BR, then parse each piece
+                        html_content = str(element)
+                        # Split on various double BR patterns (case-insensitive)
+                        parts = re.split(r'<[Bb][Rr]\s*/?\s*>\s*<[Bb][Rr]\s*/?\s*>', html_content)
                         
-                        # Skip duplicates
-                        if text in seen_texts:
-                            continue
-                        
-                        # Remove "Return to text" from footnotes
-                        text = re.sub(r'\s*Return to text\s*$', '', text, flags=re.IGNORECASE)
-                        
+                        for part in parts:
+                            if not part.strip():
+                                continue
+                            # Parse this part as HTML to extract clean text
+                            part_soup = BeautifulSoup(part, 'html.parser')
+                            part_text = part_soup.get_text(separator=' ', strip=True)
+                            
+                            if part_text and part_text not in seen_texts:
+                                if not any(phrase in part_text.lower() for phrase in self.SKIP_PHRASES):
+                                    part_text = re.sub(r'\s*Return to text\s*$', '', part_text, flags=re.IGNORECASE)
+                                    seen_texts.add(part_text)
+                                    paragraphs.append(part_text)
+                    else:
+                        # Regular paragraph without double BR
+                        text = element.get_text(separator=' ', strip=True)
+                        if text:
+                            # Skip common boilerplate
+                            if any(phrase in text.lower() for phrase in self.SKIP_PHRASES):
+                                continue
+                            
+                            # Skip duplicates
+                            if text in seen_texts:
+                                continue
+                            
+                            # Remove "Return to text" from footnotes
+                            text = re.sub(r'\s*Return to text\s*$', '', text, flags=re.IGNORECASE)
+                            
+                            seen_texts.add(text)
+                            paragraphs.append(text)
+            
+            # After processing each element, check if there's loose text immediately after it
+            # This handles text nodes that are siblings of elements (between closing and opening tags)
+            next_sibling = element.next_sibling
+            if isinstance(next_sibling, str):
+                text = next_sibling.strip()
+                if text and text not in seen_texts:
+                    # Skip if it's just whitespace or navigation
+                    if not any(phrase in text.lower() for phrase in self.SKIP_PHRASES):
                         seen_texts.add(text)
                         paragraphs.append(text)
         
@@ -534,7 +671,12 @@ class FOMCMinutesScraper:
                             # Save clean JSON
                             json_file = self.save_clean_json(date_str, text_content, release_date)
                             
+                            # Calculate stats
+                            char_count = len(text_content)
+                            paragraph_count = len([p for p in text_content.split('\n\n') if p.strip()])
+                            
                             print(f"  SUCCESS! Saved to {raw_file} and {json_file}")
+                            print(f"  Stats: {char_count:,} chars, {paragraph_count} paragraphs")
                             if release_date:
                                 print(f"  Release date: {release_date}")
                             return True

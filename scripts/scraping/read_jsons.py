@@ -7,12 +7,12 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 
 # Test dates
-dates = ["20070131", "20240612"]
+dates = ["20071211", "20240612"]
 
 json_file = project_root / "data" / "fed-comms" / "minutes" / "clean" / f"minutes{dates[0]}.json"
 
 with open(json_file, 'r', encoding='utf-8') as f:
     data = json.load(f)
 
-print(data)
+print(data['text'])
 
