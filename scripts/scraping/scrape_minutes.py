@@ -17,6 +17,10 @@ class FOMCMinutesScraper:
     DELAY_BETWEEN_URLS = 0.5
     DELAY_BETWEEN_MEETINGS = 2.0
     
+    # Parent page URLs for extracting release dates
+    HISTORICAL_YEARS = range(1993, 2020)  # 1993-2019
+    CALENDAR_URL = f"{BASE_URL}/monetarypolicy/fomccalendars.htm"  # 2020-2025
+    
     # Common boilerplate phrases to skip
     # NOTE: These should be SPECIFIC to avoid filtering legitimate content
     # Avoid broad phrases that might appear in actual minutes text
@@ -41,6 +45,12 @@ class FOMCMinutesScraper:
         self.clean_dir = Path('data/fed-comms/minutes/clean')
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.clean_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Build release date mapping from parent pages
+        self.release_date_mapping = {}
+        print("Building release date mapping from parent pages...")
+        self._build_release_date_mapping()
+        print(f"Mapped {len(self.release_date_mapping)} meeting release dates")
     
     def get_known_fomc_dates(self):
         """
@@ -118,6 +128,166 @@ class FOMCMinutesScraper:
         
         return sorted(known_dates)
     
+    def _build_release_date_mapping(self) -> None:
+        """
+        Build a mapping of meeting dates (YYYYMMDD) to release dates by scraping parent pages.
+        Extracts release dates from:
+        - Historical pages: /monetarypolicy/fomchistorical{year}.htm (1993-2019)
+        - Calendar page: /monetarypolicy/fomccalendars.htm (2020-2025)
+        """
+        # Process historical year pages (1993-2019)
+        for year in self.HISTORICAL_YEARS:
+            url = f"{self.BASE_URL}/monetarypolicy/fomchistorical{year}.htm"
+            try:
+                print(f"  Fetching {year} historical page...")
+                response = self.session.get(url, timeout=self.REQUEST_TIMEOUT)
+                if response.status_code == 200:
+                    mapping = self._extract_release_dates_from_historical_page(response.text, year)
+                    self.release_date_mapping.update(mapping)
+                    print(f"    Found {len(mapping)} meetings for {year}")
+                else:
+                    print(f"    Failed to fetch {year} page: HTTP {response.status_code}")
+            except Exception as e:
+                print(f"    Error fetching {year} page: {str(e)}")
+            time.sleep(self.DELAY_BETWEEN_URLS)
+        
+        # Process calendar page (2020-2025)
+        try:
+            print(f"  Fetching calendar page for 2020-2025...")
+            response = self.session.get(self.CALENDAR_URL, timeout=self.REQUEST_TIMEOUT)
+            if response.status_code == 200:
+                mapping = self._extract_release_dates_from_calendar_page(response.text)
+                self.release_date_mapping.update(mapping)
+                print(f"    Found {len(mapping)} meetings from calendar page")
+            else:
+                print(f"    Failed to fetch calendar page: HTTP {response.status_code}")
+        except Exception as e:
+            print(f"    Error fetching calendar page: {str(e)}")
+    
+    def _extract_release_dates_from_historical_page(self, html_content: str, year: int) -> dict:
+        """
+        Extract meeting dates and release dates from a historical year page.
+        
+        Args:
+            html_content: Raw HTML content of the historical page
+            year: Year of the page
+            
+        Returns:
+            Dictionary mapping meeting date (YYYYMMDD) to release date string
+        """
+        soup = BeautifulSoup(html_content, 'html.parser')
+        mapping = {}
+        
+        # Look for Minutes links and their associated release dates
+        # Pattern: <a href="/fomc/MINUTES/YYYY/YYYYMMDDmin.htm">Minutes</a> (Released Month Day, Year)
+        for link in soup.find_all('a', href=True):
+            href = link['href']
+            
+            # Check if this is a minutes link
+            # Could be in format: /fomc/MINUTES/1993/19930203min.htm or /fomc/minutes/20030318.htm
+            if 'minutes' in href.lower() or 'MINUTES' in href or '/fomc2008' in href:
+                # Extract date from URL
+                # Try different patterns
+                date_match = None
+                
+                # Pattern 1: /fomc/MINUTES/1993/19930203min.htm
+                match = re.search(r'/fomc/MINUTES/\d{4}/(\d{8})min\.htm', href)
+                if match:
+                    date_match = match.group(1)
+                
+                # Pattern 2: /fomc/minutes/20030318.htm
+                if not date_match:
+                    match = re.search(r'/fomc/minutes/(\d{8})\.htm', href)
+                    if match:
+                        date_match = match.group(1)
+                
+                # Pattern 3: /monetarypolicy/fomcminutes20080625.htm
+                if not date_match:
+                    match = re.search(r'/monetarypolicy/fomcminutes(\d{8})\.htm', href)
+                    if match:
+                        date_match = match.group(1)
+                
+                # Pattern 4: /monetarypolicy/fomc20080625.htm (special case for 20080625)
+                if not date_match:
+                    match = re.search(r'/monetarypolicy/fomc(\d{8})\.htm', href)
+                    if match:
+                        date_match = match.group(1)
+                
+                if date_match:
+                    # Look for release date in the text following the link
+                    # The pattern is typically: Minutes</a> (Released Month Day, Year)
+                    # Or for 2008+: Minutes (Released Month Day, Year): HTML | PDF
+                    release_date = None
+                    
+                    # Try parent element first
+                    parent = link.parent
+                    if parent:
+                        text = parent.get_text()
+                        # Extract "Released Month Day, Year" or "Release Month Day, Year"
+                        release_match = re.search(r'Released?\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})', text)
+                        if release_match:
+                            release_date = release_match.group(1)
+                    
+                    # If not found, try grandparent element (for 2008+ format)
+                    if not release_date and parent and parent.parent:
+                        text = parent.parent.get_text()
+                        release_match = re.search(r'Released?\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})', text)
+                        if release_match:
+                            release_date = release_match.group(1)
+                    
+                    if release_date:
+                        mapping[date_match] = release_date
+        
+        return mapping
+    
+    def _extract_release_dates_from_calendar_page(self, html_content: str) -> dict:
+        """
+        Extract meeting dates and release dates from the calendar page (2020-2025).
+        
+        Args:
+            html_content: Raw HTML content of the calendar page
+            
+        Returns:
+            Dictionary mapping meeting date (YYYYMMDD) to release date string
+        """
+        soup = BeautifulSoup(html_content, 'html.parser')
+        mapping = {}
+        
+        # The calendar page has sections for each year with meeting information
+        # Look for Minutes links and their associated release dates
+        for link in soup.find_all('a', href=True):
+            href = link['href']
+            
+            # Check if this is a minutes link for 2020+
+            if 'fomcminutes' in href.lower():
+                # Extract date from URL: /monetarypolicy/fomcminutes20200129.htm
+                match = re.search(r'/monetarypolicy/fomcminutes(\d{8})\.htm', href)
+                if match:
+                    date_match = match.group(1)
+                    
+                    # Look for release date in parent or grandparent elements
+                    release_date = None
+                    
+                    # Try parent element first
+                    parent = link.parent
+                    if parent:
+                        text = parent.get_text()
+                        release_match = re.search(r'Released?\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})', text)
+                        if release_match:
+                            release_date = release_match.group(1)
+                    
+                    # If not found, try grandparent element
+                    if not release_date and parent and parent.parent:
+                        text = parent.parent.get_text()
+                        release_match = re.search(r'Released?\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})', text)
+                        if release_match:
+                            release_date = release_match.group(1)
+                    
+                    if release_date:
+                        mapping[date_match] = release_date
+        
+        return mapping
+    
     def construct_minutes_urls(self, date_str: str) -> List[str]:
         """
         Construct possible URLs for FOMC minutes based on historical patterns.
@@ -169,53 +339,6 @@ class FOMCMinutesScraper:
             f.write(f"<!-- Scraped: {datetime.now().isoformat()} -->\n")
             f.write(html_content)
         return filename
-    
-    def extract_release_date(self, html_content: str) -> Optional[str]:
-        """
-        Extract the release date from the minutes HTML.
-        
-        Args:
-            html_content: Raw HTML content
-            
-        Returns:
-            Release date string if found, None otherwise
-        """
-        soup = BeautifulSoup(html_content, 'html.parser')
-        
-        # Look for common patterns for release date
-        release_patterns = [
-            r'Last Update:\s*([A-Za-z]+ \d{1,2}, \d{4})',
-            r'Released:\s*([A-Za-z]+ \d{1,2}, \d{4})',
-            r'Release Date:\s*([A-Za-z]+ \d{1,2}, \d{4})',
-            r'(?:Released|Last Update):\s*([A-Za-z]+ \d{1,2}, \d{4})'
-        ]
-        
-        # Search in the full text
-        full_text = soup.get_text()
-        for pattern in release_patterns:
-            match = re.search(pattern, full_text, re.IGNORECASE)
-            if match:
-                return match.group(1)
-        
-        # Look for specific HTML elements that might contain the date
-        date_selectors = [
-            '.lastUpdate',
-            '#lastUpdate', 
-            '.releaseDate',
-            '[class*="date"]',
-            '[id*="date"]'
-        ]
-        
-        for selector in date_selectors:
-            element = soup.select_one(selector)
-            if element:
-                text = element.get_text().strip()
-                for pattern in release_patterns:
-                    match = re.search(pattern, text, re.IGNORECASE)
-                    if match:
-                        return match.group(1)
-        
-        return None
     
     def _clean_whitespace(self, text: str) -> str:
         """
@@ -723,8 +846,8 @@ class FOMCMinutesScraper:
                         text_content = self.extract_minutes_text(html_content)
                         
                         if len(text_content) > self.MIN_MINUTES_LENGTH:
-                            # Extract release date
-                            release_date = self.extract_release_date(html_content)
+                            # Get release date from mapping (built from parent pages)
+                            release_date = self.release_date_mapping.get(date_str)
                             
                             # Save raw HTML
                             raw_file = self.save_raw_html(date_str, html_content, url)

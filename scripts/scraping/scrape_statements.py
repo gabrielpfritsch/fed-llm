@@ -21,61 +21,73 @@ class FOMCStatementScraper:
     
     def get_known_fomc_dates(self):
         """
-        Get comprehensive list of known FOMC meeting dates from 2000-2025
+        Get comprehensive list of known FOMC meeting dates from 1993-2025
         Based on historical FOMC schedules and patterns
         """
         known_dates = [
-            # 2000
+            # 1994 (/fomc/{date}default.htm)
+            "19940204", "19940322", "19940517", "19940816", "19940927", "19941115",
+            # 1995 (/fomc/{date}default.htm)
+            "19950201", "19950706", "19951219",
+            # 1996 (/fomc/{date}DEFAULT.htm)
+            "19960131",
+            # 1997 (/boarddocs/press/general/{year}/{date}/)
+            "19970325",  
+            # 1998 (/boarddocs/press/general/{year}/{date}/)
+            "19980929", "19981117",
+            # 1999 (/boarddocs/press/general/{year}/{date}/)
+            "19990518", "19990629", "19990824", "19991005", "19991116", "19991221",
+            # 2000 (/boarddocs/press/general/{year}/{date}/)
             "20000202", "20000321", "20000516", "20000628", "20000822", "20001003", "20001115", "20001219",
-            # 2001  
+            # 2001 (/boarddocs/press/general/{year}/{date}/)
             "20010131", "20010320", "20010515", "20010627", "20010821", "20011002", "20011106", "20011211",
-            # 2002
+            # 2002 (/boarddocs/press/general/{year}/{date}/ until 20020319 then /boarddocs/press/monetary/{year}/{date}/)
             "20020130", "20020319", "20020507", "20020626", "20020813", "20020924", "20021106", "20021210",
-            # 2003
+            # 2003 (/boarddocs/press/monetary/{year}/{date}/default.htm)
             "20030129", "20030318", "20030506", "20030625", "20030812", "20030916", "20031028", "20031209",
-            # 2004
+            # 2004 (/boarddocs/press/monetary/{year}/{date}/default.htm)
             "20040128", "20040316", "20040504", "20040630", "20040810", "20040921", "20041110", "20041214",
-            # 2005
+            # 2005 (/boarddocs/press/monetary/{year}/{date}/default.htm)
             "20050202", "20050322", "20050503", "20050630", "20050809", "20050920", "20051101", "20051213",
-            # 2006
+            # 2006 (/newsevents/pressreleases/monetary{date}a.htm)
             "20060131", "20060328", "20060510", "20060629", "20060808", "20060920", "20061025", "20061212",
-            # 2007
+            # 2007 (/newsevents/pressreleases/monetary{date}a.htm)
             "20070131", "20070321", "20070509", "20070628", "20070807", "20070918", "20071031", "20071211",
-            # 2008
+            # 2008 (/newsevents/pressreleases/monetary{date}a.htm)
             "20080130", "20080318", "20080430", "20080625", "20080805", "20080916", "20081029", "20081216",
-            # 2009
+            # 2009 (/newsevents/pressreleases/monetary{date}a.htm)
             "20090128", "20090318", "20090429", "20090624", "20090812", "20090923", "20091104", "20091216",
-            # 2010
+            # 2010 (/newsevents/pressreleases/monetary{date}a.htm)
             "20100127", "20100316", "20100428", "20100623", "20100810", "20100921", "20101103", "20101214",
-            # 2011
+            # 2011 (/newsevents/pressreleases/monetary{date}a.htm)
             "20110126", "20110315", "20110427", "20110622", "20110809", "20110921", "20111102", "20111213",
-            # 2012
+            # 2012 (/newsevents/pressreleases/monetary{date}a.htm)
             "20120125", "20120313", "20120425", "20120620", "20120801", "20120913", "20121024", "20121212",
-            # 2013
+            # 2013 (/newsevents/pressreleases/monetary{date}a.htm)
             "20130130", "20130320", "20130501", "20130619", "20130731", "20130918", "20131030", "20131218",
-            # 2014
+            # 2014 (/newsevents/pressreleases/monetary{date}a.htm)
             "20140129", "20140319", "20140430", "20140618", "20140730", "20140917", "20141029", "20141217",
-            # 2015
+            # 2015 (/newsevents/pressreleases/monetary{date}a.htm)
             "20150128", "20150318", "20150429", "20150617", "20150729", "20150917", "20151028", "20151216",
-            # 2016
+            # 2016 (/newsevents/pressreleases/monetary{date}a.htm)
             "20160127", "20160316", "20160427", "20160615", "20160727", "20160921", "20161102", "20161214",
-            # 2017
+            # 2017 (/newsevents/pressreleases/monetary{date}a.htm)
             "20170201", "20170315", "20170503", "20170614", "20170726", "20170920", "20171101", "20171213",
-            # 2018
+            # 2018 (/newsevents/pressreleases/monetary{date}a.htm)
             "20180131", "20180321", "20180502", "20180613", "20180801", "20180926", "20181108", "20181219",
-            # 2019
+            # 2019 (/newsevents/pressreleases/monetary{date}a.htm)
             "20190130", "20190320", "20190501", "20190619", "20190731", "20190918", "20191030", "20191211",
-            # 2020
+            # 2020 (/newsevents/pressreleases/monetary{date}a.htm)
             "20200129", "20200315", "20200429", "20200610", "20200729", "20200916", "20201105", "20201216",
-            # 2021
+            # 2021 (/newsevents/pressreleases/monetary{date}a.htm)
             "20210127", "20210317", "20210428", "20210616", "20210728", "20210922", "20211103", "20211215",
-            # 2022
+            # 2022 (/newsevents/pressreleases/monetary{date}a.htm)
             "20220126", "20220316", "20220504", "20220615", "20220727", "20220921", "20221102", "20221214",
-            # 2023
+            # 2023 (/newsevents/pressreleases/monetary{date}a.htm)
             "20230201", "20230322", "20230503", "20230614", "20230726", "20230920", "20231101", "20231213",
-            # 2024
+            # 2024 (/newsevents/pressreleases/monetary{date}a.htm)
             "20240131", "20240320", "20240501", "20240612", "20240731", "20240918", "20241107", "20241218",
-            # 2025 (actual dates through July 23, 2025)
+            # 2025 (/newsevents/pressreleases/monetary{date}a.htm)
             "20250129", "20250319", "20250507", "20250618", "20250730"
         ]
         
